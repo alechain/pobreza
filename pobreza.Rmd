@@ -1,0 +1,87 @@
+---
+title: "Cálculo de pobreza"
+author: "Alejandro Chaín"
+date: "19/2/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r}
+setwd("~/GitHub/pobreza")
+library(eph)
+library(tidyverse)
+library(formattable)
+library(Hmisc)
+library(readxl)
+library(foreign)
+library(glue)
+library(splitstackshape)
+library(purrr)
+```
+# Cargando el diccionario de aglomerados y las canastas por regiones
+```{r}
+aglomerados<-read_excel("aglomerado.xlsx", sheet = 4)
+canastas<- read.csv("canasta.csv", sep=";", dec=".", header = TRUE)
+canastas<- canastas %>% filter(ANO4==2020, TRIMESTRE %in% c(1,2))
+```
+#Cargamos ls microdatos de EPH y los unimos para obtener el primer semestre de 2020
+```{r}
+ephi<- get_microdata(year=2020, trimester = 1, type = "individual")
+ephh <- get_microdata(year=2020, trimester = 1, type = "hogar")
+
+eph1t<- left_join(ephi,ephh)
+
+ephi<- get_microdata(year=2020, trimester = 2, type = "individual")
+ephh <- get_microdata(year=2020, trimester = 2, type = "hogar")
+
+
+eph2t <- left_join(ephi, ephh)
+
+eph1s<- bind_rows(eph2t, eph1t)
+```
+
+# Reescalamos el PONDIH para que pase a ser semestral
+```{r}
+eph1s<- eph1s %>% mutate(PONDIH=PONDIH/2)
+```
+
+# Asignamos los nombres de los aglomerados, las canastas correspondientes por región y los adultos equivalentes por edad y sexo
+```{r}
+eph1s<- left_join(eph1s,aglomerados)
+eph1s<- left_join(eph1s,eph::adulto_equivalente)
+eph1s<- left_join(eph1s,canastas)
+```
+
+# Creamos el equivalente adulto por hogar:
+```{r}
+eph1s<- eph1s %>% group_by(ANO4, TRIMESTRE, CODUSU,NRO_HOGAR) %>% mutate(EAF=sum(adequi)) %>% ungroup()
+```
+
+# Calculamos las lineas de Pobreza e Indigencia
+```{r}
+eph1s<- eph1s %>% mutate(CBAEQ=CBA*EAF,
+                         CBTEQ=CBT*EAF)
+```
+# Asignamos las condiciones para cada persona
+```{r}
+eph1s<- eph1s %>% mutate(condicion=case_when(ITF<CBAEQ ~ "Indigente",
+                                             ITF>=CBAEQ & ITF<CBTEQ ~ "Pobre",
+                                             ITF>=CBTEQ ~ "No Pobre"))
+```
+
+# Análisis de PERSONAS
+## Personas del total de aglomerados totales y por condicion
+```{r}
+eph1s %>% summarise("Personas Pobres"=sum(PONDIH[condicion%in% c( "Pobre", "Indigente")],na.rm = T),"Personas Indigentes"=sum(PONDIH[condicion%in% c( "Indigente")], na.rm = T) ,"Peronas totales"=sum(PONDIH, na.rm = T) )
+```
+
+
+## Personas totales y personas pobres en CANTIDADES por REGION
+```{r}
+eph1s %>% group_by("Región"=reg) %>%  summarise("Personas Pobres"=sum(PONDIH[condicion%in% c( "Pobre", "Indigente")],na.rm = T),"Personas Indigentes"=sum(PONDIH[condicion%in% c( "Indigente")], na.rm = T) ,"Peronas totales"=sum(PONDIH, na.rm = T) )
+
+```
